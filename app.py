@@ -1,37 +1,39 @@
 from flask import Flask, jsonify, render_template, request
-import json
-import os
 import csv
 import io
+import os
+
 
 
 app = Flask(__name__)
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'biases.json')
 
-def load_biases():
-    with open(DATA_PATH) as f:
-        return json.load(f)
+DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'titanic.csv')
 
-@app.route('/api/biases')
-def biases():
-    return jsonify(load_biases())
+
+def parse_csv(stream):
+    reader = csv.DictReader(stream)
+    return [row for row in reader]
+
+
+@app.route('/api/sample')
+def sample():
+    with open(DATA_PATH, newline='', encoding='utf-8') as f:
+        return jsonify(parse_csv(f))
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
 @app.route('/upload', methods=['POST'])
 def upload():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file provided'}), 400
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
     stream = io.StringIO(file.stream.read().decode('utf-8'))
-    reader = csv.DictReader(stream)
-    data = [row for row in reader]
-    return jsonify(data)
+    return jsonify(parse_csv(stream))
+
 
 
 if __name__ == '__main__':
