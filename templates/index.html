@@ -8,7 +8,6 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body class="container py-4">
-
   <h1 class="mb-4 text-center">Dataset Visualizer</h1>
   <form id="upload-form" class="mb-3 d-flex gap-2">
     <input type="file" id="file-input" accept=".csv" class="form-control" />
@@ -19,11 +18,14 @@
   <div id="chart"></div>
 
   <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
   <script>
     const chartEl = d3.select('#chart');
     let currentData = [];
     let numericFields = [];
     let categoricalFields = [];
+    let webglRenderer = null;
+    let webglAnim = null;
 
     function detectFields(data) {
       const columns = Object.keys(data[0]);
@@ -39,7 +41,12 @@
       vizDiv.append('label').attr('for', 'viz-select').text('Visualization');
       const vizSelect = vizDiv.append('select').attr('id', 'viz-select').attr('class', 'form-select');
       vizSelect.selectAll('option')
-        .data([{v:'scatter',t:'Scatter Plot'}, {v:'bar',t:'Bar Chart'}])
+        .data([
+          {v:'scatter',t:'Scatter Plot'},
+          {v:'bar',t:'Bar Chart'},
+          {v:'webgl',t:'3D WebGL Scatter'},
+          {v:'kmeans',t:'K-Means Clusters'}
+        ])
         .enter().append('option').attr('value', d => d.v).text(d => d.t);
 
       const xDiv = controls.append('div').attr('class', 'col-md-3 scatter-control');
@@ -52,22 +59,33 @@
       const ySelect = yDiv.append('select').attr('id', 'y-select').attr('class', 'form-select');
       ySelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
 
+      const zDiv = controls.append('div').attr('class', 'col-md-3 webgl-control d-none');
+      zDiv.append('label').attr('for', 'z-select').text('Z Axis');
+      const zSelect = zDiv.append('select').attr('id', 'z-select').attr('class', 'form-select');
+      zSelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
       const catDiv = controls.append('div').attr('class', 'col-md-3 bar-control d-none');
       catDiv.append('label').attr('for', 'cat-select').text('Category');
       const catSelect = catDiv.append('select').attr('id', 'cat-select').attr('class', 'form-select');
       catSelect.selectAll('option').data(categoricalFields).enter().append('option').attr('value', d => d).text(d => d);
+      const clusterDiv = controls.append('div').attr('class', 'col-md-3 kmeans-control d-none');
+      clusterDiv.append('label').attr('for', 'cluster-input').text('Clusters');
+      const clusterInput = clusterDiv.append('input').attr('type', 'number').attr('id', 'cluster-input').attr('class', 'form-control').attr('min', 2).attr('max', 10).attr('value', 3);
 
       function update() {
         const viz = vizSelect.node().value;
-        controls.selectAll('.scatter-control').classed('d-none', viz !== 'scatter');
+        controls.selectAll('.scatter-control').classed('d-none', !(viz === 'scatter' || viz === 'kmeans' || viz === 'webgl'));
         catDiv.classed('d-none', viz !== 'bar');
+        zDiv.classed('d-none', viz !== 'webgl');
+        clusterDiv.classed('d-none', viz !== 'kmeans');
         render();
       }
 
       vizSelect.on('change', update);
       xSelect.on('change', render);
       ySelect.on('change', render);
+      zSelect.on('change', render);
       catSelect.on('change', render);
+      clusterInput.on('change', render);
       update();
     }
 
@@ -104,8 +122,91 @@
         .style('text-anchor', 'end');
       svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
     }
+    
+    function drawWebGLScatter(data, xField, yField, zField) {
+      const width = 600, height = 400;
+      webglRenderer = new THREE.WebGLRenderer();
+      webglRenderer.setSize(width, height);
+      chartEl.node().appendChild(webglRenderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+      const x = d3.scaleLinear().domain(d3.extent(data, d => +d[xField])).range([-5, 5]);
+      const y = d3.scaleLinear().domain(d3.extent(data, d => +d[yField])).range([-5, 5]);
+      const z = d3.scaleLinear().domain(d3.extent(data, d => +d[zField])).range([-5, 5]);
+
+      data.filter(d => d[xField] !== '' && d[yField] !== '' && d[zField] !== '').forEach(d => {
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: 0x1f77b4 });
+        const sphere = new THREE.Mesh(geometry, material);
+        sphere.position.set(x(+d[xField]), y(+d[yField]), z(+d[zField]));
+        scene.add(sphere);
+      });
+
+      camera.position.z = 10;
+      function animate() {
+        webglAnim = requestAnimationFrame(animate);
+        scene.rotation.y += 0.01;
+        webglRenderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    function kmeans(data, xField, yField, k, iterations = 10) {
+      const points = data
+        .map(d => [ +d[xField], +d[yField] ])
+        .filter(p => !isNaN(p[0]) && !isNaN(p[1]));
+      let centroids = points.slice(0, k);
+      let assignments = new Array(points.length).fill(0);
+      for (let iter = 0; iter < iterations; iter++) {
+        for (let i = 0; i < points.length; i++) {
+          let minDist = Infinity, idx = 0;
+          for (let c = 0; c < k; c++) {
+            const dx = points[i][0] - centroids[c][0];
+            const dy = points[i][1] - centroids[c][1];
+            const dist = dx * dx + dy * dy;
+            if (dist < minDist) { minDist = dist; idx = c; }
+          }
+          assignments[i] = idx;
+        }
+        const sums = Array.from({length: k}, () => [0,0,0]);
+        for (let i = 0; i < points.length; i++) {
+          const a = assignments[i];
+          sums[a][0] += points[i][0];
+          sums[a][1] += points[i][1];
+          sums[a][2] += 1;
+        }
+        for (let c = 0; c < k; c++) {
+          if (sums[c][2]) {
+            centroids[c][0] = sums[c][0] / sums[c][2];
+            centroids[c][1] = sums[c][1] / sums[c][2];
+          }
+        }
+      }
+      return { points, assignments };
+    }
+
+    function drawKMeans(data, xField, yField, k) {
+      const { points, assignments } = kmeans(data, xField, yField, k);
+      const width = 600, height = 400, margin = {top:20, right:20, bottom:40, left:40};
+      const svg = chartEl.append('svg').attr('width', width).attr('height', height);
+      const x = d3.scaleLinear().domain(d3.extent(points, d => d[0])).nice().range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain(d3.extent(points, d => d[1])).nice().range([height - margin.bottom, margin.top]);
+      svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x));
+      svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+      const colors = d3.schemeCategory10;
+      svg.append('g').selectAll('circle')
+        .data(points)
+        .enter().append('circle')
+        .attr('cx', d => x(d[0]))
+        .attr('cy', d => y(d[1]))
+        .attr('r', 3)
+        .attr('fill', (d, i) => colors[assignments[i] % 10]);
+    }
 
     function render() {
+      if (webglAnim) { cancelAnimationFrame(webglAnim); webglAnim = null; }
+      if (webglRenderer) { webglRenderer.forceContextLoss(); webglRenderer = null; }
       chartEl.selectAll('*').remove();
       if (!currentData.length) return;
       const viz = document.getElementById('viz-select').value;
@@ -116,6 +217,16 @@
       } else if (viz === 'bar') {
         const field = document.getElementById('cat-select').value;
         if (field) drawBarChart(currentData, field);
+      } else if (viz === 'webgl') {
+        const xField = document.getElementById('x-select').value;
+        const yField = document.getElementById('y-select').value;
+        const zField = document.getElementById('z-select').value;
+        if (xField && yField && zField) drawWebGLScatter(currentData, xField, yField, zField);
+      } else if (viz === 'kmeans') {
+        const xField = document.getElementById('x-select').value;
+        const yField = document.getElementById('y-select').value;
+        const k = +document.getElementById('cluster-input').value;
+        if (xField && yField) drawKMeans(currentData, xField, yField, k);
       }
     }
 
@@ -126,14 +237,12 @@
       render();
     }
 
-
     document.getElementById('upload-form').addEventListener('submit', e => {
       e.preventDefault();
       const fileInput = document.getElementById('file-input');
       if (!fileInput.files.length) return;
       const formData = new FormData();
       formData.append('file', fileInput.files[0]);
-
       fetch('/upload', {method: 'POST', body: formData})
         .then(res => res.json())
         .then(handleData);
