@@ -4,6 +4,7 @@ import os
 import csv
 import io
 
+
 app = Flask(__name__)
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'biases.json')
@@ -20,7 +21,6 @@ def biases():
 def index():
     return render_template('index.html')
 
-
 @app.route('/upload', methods=['POST'])
 def upload():
     if 'file' not in request.files:
@@ -32,6 +32,7 @@ def upload():
     reader = csv.DictReader(stream)
     data = [row for row in reader]
     return jsonify(data)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
