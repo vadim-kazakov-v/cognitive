@@ -1,0 +1,6 @@
+[
+  {"id": 1, "name": "Anchoring", "category": "Decision Making"},
+  {"id": 2, "name": "Confirmation Bias", "category": "Information"},
+  {"id": 3, "name": "Availability Heuristic", "category": "Probability"},
+  {"id": 4, "name": "Bandwagon Effect", "category": "Social"}
+]

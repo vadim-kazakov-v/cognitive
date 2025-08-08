@@ -4,6 +4,7 @@ import io
 import os
 
 
+
 app = Flask(__name__)
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'titanic.csv')
