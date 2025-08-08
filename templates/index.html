@@ -20,6 +20,7 @@
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/ml-pca@2.0.0/dist/ml-pca.min.js"></script>
+
   <script>
     const chartEl = d3.select('#chart');
     let currentData = [];
@@ -66,16 +67,13 @@
       zDiv.append('label').attr('for', 'z-select').text('Z Axis');
       const zSelect = zDiv.append('select').attr('id', 'z-select').attr('class', 'form-select');
       zSelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
-
       const catDiv = controls.append('div').attr('class', 'col-md-3 bar-control d-none');
       catDiv.append('label').attr('for', 'cat-select').text('Category');
       const catSelect = catDiv.append('select').attr('id', 'cat-select').attr('class', 'form-select');
       catSelect.selectAll('option').data(categoricalFields).enter().append('option').attr('value', d => d).text(d => d);
-
       const clusterDiv = controls.append('div').attr('class', 'col-md-3 kmeans-control d-none');
       clusterDiv.append('label').attr('for', 'cluster-input').text('Clusters');
       const clusterInput = clusterDiv.append('input').attr('type', 'number').attr('id', 'cluster-input').attr('class', 'form-control').attr('min', 2).attr('max', 10).attr('value', 3);
-
       const pcaDiv = controls.append('div').attr('class', 'col-md-3 pca-control d-none');
       pcaDiv.append('label').attr('for', 'pca-select').text('Fields for PCA');
       const pcaSelect = pcaDiv.append('select').attr('id', 'pca-select').attr('class', 'form-select').attr('multiple', true).attr('size', Math.min(5, numericFields.length));

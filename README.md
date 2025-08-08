@@ -1,6 +1,8 @@
+
 # Dataset Visualizer
 
 Web application for exploring CSV datasets through interactive charts. The backend uses Python and Flask, while the frontend leverages D3.js and Three.js for visualizations. Upload your own data or load the included Titanic sample to experiment.
+
 
 ## Development
 
@@ -26,6 +28,7 @@ Visit `http://localhost:5000` and either upload a CSV file or click "Load Titani
 * **K-Means Clusters** – apply a simple AI/ML clustering algorithm on two numeric columns and color code the resulting groups.
 * **Correlation Matrix** – compute Pearson correlations across all numeric fields and display them in a heatmap.
 * **PCA 2D Scatter** – reduce multiple numeric dimensions into two principal components for scientific analysis.
+
 
 ### CSV requirements
 
