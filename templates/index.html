@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dataset Visualizer</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="container py-4">
+  <h1 class="mb-4 text-center">Dataset Visualizer</h1>
+  <form id="upload-form" class="mb-3 d-flex gap-2">
+    <input type="file" id="file-input" accept=".csv" class="form-control" />
+    <button class="btn btn-primary" type="submit">Upload CSV</button>
+    <button class="btn btn-secondary" id="load-sample" type="button">Load Titanic Sample</button>
+  </form>
+  <div id="controls" class="row g-2 mb-3"></div>
+  <div id="chart"></div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ml-pca@2.0.0/dist/ml-pca.min.js"></script>
+  <script>
+    const chartEl = d3.select('#chart');
+    let currentData = [];
+    let numericFields = [];
+    let categoricalFields = [];
+    let webglRenderer = null;
+    let webglAnim = null;
+
+    function detectFields(data) {
+      const columns = Object.keys(data[0]);
+      numericFields = columns.filter(col => data.every(row => row[col] === '' || !isNaN(+row[col])));
+      categoricalFields = columns.filter(col => !numericFields.includes(col));
+    }
+
+    function initControls() {
+      const controls = d3.select('#controls');
+      controls.selectAll('*').remove();
+
+      const vizDiv = controls.append('div').attr('class', 'col-md-3');
+      vizDiv.append('label').attr('for', 'viz-select').text('Visualization');
+      const vizSelect = vizDiv.append('select').attr('id', 'viz-select').attr('class', 'form-select');
+      vizSelect.selectAll('option')
+        .data([
+          {v:'scatter',t:'Scatter Plot'},
+          {v:'bar',t:'Bar Chart'},
+          {v:'webgl',t:'3D WebGL Scatter'},
+          {v:'kmeans',t:'K-Means Clusters'},
+          {v:'corr',t:'Correlation Matrix'},
+          {v:'pca',t:'PCA 2D Scatter'}
+        ])
+        .enter().append('option').attr('value', d => d.v).text(d => d.t);
+
+      const xDiv = controls.append('div').attr('class', 'col-md-3 scatter-control');
+      xDiv.append('label').attr('for', 'x-select').text('X Axis');
+      const xSelect = xDiv.append('select').attr('id', 'x-select').attr('class', 'form-select');
+      xSelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
+
+      const yDiv = controls.append('div').attr('class', 'col-md-3 scatter-control');
+      yDiv.append('label').attr('for', 'y-select').text('Y Axis');
+      const ySelect = yDiv.append('select').attr('id', 'y-select').attr('class', 'form-select');
+      ySelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
+
+      const zDiv = controls.append('div').attr('class', 'col-md-3 webgl-control d-none');
+      zDiv.append('label').attr('for', 'z-select').text('Z Axis');
+      const zSelect = zDiv.append('select').attr('id', 'z-select').attr('class', 'form-select');
+      zSelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
+
+      const catDiv = controls.append('div').attr('class', 'col-md-3 bar-control d-none');
+      catDiv.append('label').attr('for', 'cat-select').text('Category');
+      const catSelect = catDiv.append('select').attr('id', 'cat-select').attr('class', 'form-select');
+      catSelect.selectAll('option').data(categoricalFields).enter().append('option').attr('value', d => d).text(d => d);
+
+      const clusterDiv = controls.append('div').attr('class', 'col-md-3 kmeans-control d-none');
+      clusterDiv.append('label').attr('for', 'cluster-input').text('Clusters');
+      const clusterInput = clusterDiv.append('input').attr('type', 'number').attr('id', 'cluster-input').attr('class', 'form-control').attr('min', 2).attr('max', 10).attr('value', 3);
+
+      const pcaDiv = controls.append('div').attr('class', 'col-md-3 pca-control d-none');
+      pcaDiv.append('label').attr('for', 'pca-select').text('Fields for PCA');
+      const pcaSelect = pcaDiv.append('select').attr('id', 'pca-select').attr('class', 'form-select').attr('multiple', true).attr('size', Math.min(5, numericFields.length));
+      pcaSelect.selectAll('option').data(numericFields).enter().append('option').attr('value', d => d).text(d => d);
+
+      function update() {
+        const viz = vizSelect.node().value;
+        controls.selectAll('.scatter-control').classed('d-none', !(viz === 'scatter' || viz === 'kmeans' || viz === 'webgl'));
+        catDiv.classed('d-none', viz !== 'bar');
+        zDiv.classed('d-none', viz !== 'webgl');
+        clusterDiv.classed('d-none', viz !== 'kmeans');
+        pcaDiv.classed('d-none', viz !== 'pca');
+        render();
+      }
+
+      vizSelect.on('change', update);
+      xSelect.on('change', render);
+      ySelect.on('change', render);
+      zSelect.on('change', render);
+      catSelect.on('change', render);
+      clusterInput.on('change', render);
+      pcaSelect.on('change', render);
+      update();
+    }
+
+    function drawScatterPlot(data, xField, yField) {
+      const width = 600, height = 400, margin = {top:20, right:20, bottom:40, left:40};
+      const svg = chartEl.append('svg').attr('width', width).attr('height', height);
+      const x = d3.scaleLinear().domain(d3.extent(data, d => +d[xField])).nice().range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain(d3.extent(data, d => +d[yField])).nice().range([height - margin.bottom, margin.top]);
+      svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x));
+      svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+      svg.append('g').selectAll('circle')
+        .data(data.filter(d => d[xField] !== '' && d[yField] !== ''))
+        .enter().append('circle')
+        .attr('cx', d => x(+d[xField]))
+        .attr('cy', d => y(+d[yField]))
+        .attr('r', 3)
+        .attr('fill', '#1f77b4');
+    }
+
+    function drawBarChart(data, field) {
+      const counts = Array.from(d3.rollup(data, v => v.length, d => d[field]), ([k, v]) => ({key: k || 'N/A', value: v}));
+      const width = 600, height = 400, margin = {top:20, right:20, bottom:80, left:40};
+      const svg = chartEl.append('svg').attr('width', width).attr('height', height);
+      const x = d3.scaleBand().domain(counts.map(d => d.key)).range([margin.left, width - margin.right]).padding(0.1);
+      const y = d3.scaleLinear().domain([0, d3.max(counts, d => d.value)]).nice().range([height - margin.bottom, margin.top]);
+      svg.append('g').selectAll('rect').data(counts).enter().append('rect')
+        .attr('x', d => x(d.key))
+        .attr('y', d => y(d.value))
+        .attr('width', x.bandwidth())
+        .attr('height', d => y(0) - y(d.value))
+        .attr('fill', '#69b3a2');
+      svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x)).selectAll('text')
+        .attr('transform', 'rotate(-40)')
+        .style('text-anchor', 'end');
+      svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+    }
+
+    function computeCorrelation(data, fieldA, fieldB) {
+      let sumA = 0, sumB = 0, sumAB = 0, sumAA = 0, sumBB = 0, n = 0;
+      data.forEach(d => {
+        const a = +d[fieldA], b = +d[fieldB];
+        if (!isNaN(a) && !isNaN(b)) {
+          sumA += a; sumB += b; sumAB += a * b; sumAA += a * a; sumBB += b * b; n++;
+        }
+      });
+      const numerator = n * sumAB - sumA * sumB;
+      const denom = Math.sqrt((n * sumAA - sumA * sumA) * (n * sumBB - sumB * sumB));
+      return denom ? numerator / denom : 0;
+    }
+
+    function drawCorrelationMatrix(data) {
+      const fields = numericFields;
+      const size = 400;
+      const svg = chartEl.append('svg').attr('width', size).attr('height', size);
+      const matrix = fields.map(f1 => fields.map(f2 => computeCorrelation(data, f1, f2)));
+      const scale = d3.scaleLinear().domain([-1, 1]).range(['#b2182b', '#2166ac']).interpolate(d3.interpolateRgb);
+      const cellSize = size / fields.length;
+      svg.selectAll('g').data(matrix).enter().append('g').each(function(row, i) {
+        d3.select(this).selectAll('rect').data(row).enter().append('rect')
+          .attr('x', (d, j) => j * cellSize)
+          .attr('y', i * cellSize)
+          .attr('width', cellSize)
+          .attr('height', cellSize)
+          .attr('fill', d => scale(d));
+      });
+      svg.selectAll('.x').data(fields).enter().append('text')
+        .attr('x', (d, i) => i * cellSize + cellSize / 2)
+        .attr('y', size - 5)
+        .attr('text-anchor', 'middle')
+        .text(d => d);
+      svg.selectAll('.y').data(fields).enter().append('text')
+        .attr('transform', (d, i) => `translate(5,${i * cellSize + cellSize / 2}) rotate(-90)`)
+        .attr('text-anchor', 'middle')
+        .text(d => d);
+    }
+
+    function drawPCA(data, fields) {
+      const points = data.map(d => fields.map(f => +d[f])).filter(p => p.every(v => !isNaN(v)));
+      if (!points.length) return;
+      const pca = new PCA(points);
+      const transformed = pca.predict(points, {nComponents: 2}).to2DArray();
+      const width = 600, height = 400, margin = {top:20, right:20, bottom:40, left:40};
+      const svg = chartEl.append('svg').attr('width', width).attr('height', height);
+      const x = d3.scaleLinear().domain(d3.extent(transformed, d => d[0])).nice().range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain(d3.extent(transformed, d => d[1])).nice().range([height - margin.bottom, margin.top]);
+      svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x));
+      svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+      svg.append('g').selectAll('circle').data(transformed).enter().append('circle')
+        .attr('cx', d => x(d[0]))
+        .attr('cy', d => y(d[1]))
+        .attr('r', 3)
+        .attr('fill', '#ff7f0e');
+    }
+
+    function drawWebGLScatter(data, xField, yField, zField) {
+      const width = 600, height = 400;
+      webglRenderer = new THREE.WebGLRenderer();
+      webglRenderer.setSize(width, height);
+      chartEl.node().appendChild(webglRenderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+      const x = d3.scaleLinear().domain(d3.extent(data, d => +d[xField])).range([-5, 5]);
+      const y = d3.scaleLinear().domain(d3.extent(data, d => +d[yField])).range([-5, 5]);
+      const z = d3.scaleLinear().domain(d3.extent(data, d => +d[zField])).range([-5, 5]);
+
+      data.filter(d => d[xField] !== '' && d[yField] !== '' && d[zField] !== '').forEach(d => {
+        const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: 0x1f77b4 });
+        const sphere = new THREE.Mesh(geometry, material);
+        sphere.position.set(x(+d[xField]), y(+d[yField]), z(+d[zField]));
+        scene.add(sphere);
+      });
+
+      camera.position.z = 10;
+      function animate() {
+        webglAnim = requestAnimationFrame(animate);
+        scene.rotation.y += 0.01;
+        webglRenderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    function kmeans(data, xField, yField, k, iterations = 10) {
+      const points = data
+        .map(d => [ +d[xField], +d[yField] ])
+        .filter(p => !isNaN(p[0]) && !isNaN(p[1]));
+      let centroids = points.slice(0, k);
+      let assignments = new Array(points.length).fill(0);
+      for (let iter = 0; iter < iterations; iter++) {
+        for (let i = 0; i < points.length; i++) {
+          let minDist = Infinity, idx = 0;
+          for (let c = 0; c < k; c++) {
+            const dx = points[i][0] - centroids[c][0];
+            const dy = points[i][1] - centroids[c][1];
+            const dist = dx * dx + dy * dy;
+            if (dist < minDist) { minDist = dist; idx = c; }
+          }
+          assignments[i] = idx;
+        }
+        const sums = Array.from({length: k}, () => [0,0,0]);
+        for (let i = 0; i < points.length; i++) {
+          const a = assignments[i];
+          sums[a][0] += points[i][0];
+          sums[a][1] += points[i][1];
+          sums[a][2] += 1;
+        }
+        for (let c = 0; c < k; c++) {
+          if (sums[c][2]) {
+            centroids[c][0] = sums[c][0] / sums[c][2];
+            centroids[c][1] = sums[c][1] / sums[c][2];
+          }
+        }
+      }
+      return { points, assignments };
+    }
+
+    function drawKMeans(data, xField, yField, k) {
+      const { points, assignments } = kmeans(data, xField, yField, k);
+      const width = 600, height = 400, margin = {top:20, right:20, bottom:40, left:40};
+      const svg = chartEl.append('svg').attr('width', width).attr('height', height);
+      const x = d3.scaleLinear().domain(d3.extent(points, d => d[0])).nice().range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain(d3.extent(points, d => d[1])).nice().range([height - margin.bottom, margin.top]);
+      svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x));
+      svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+      const colors = d3.schemeCategory10;
+      svg.append('g').selectAll('circle')
+        .data(points)
+        .enter().append('circle')
+        .attr('cx', d => x(d[0]))
+        .attr('cy', d => y(d[1]))
+        .attr('r', 3)
+        .attr('fill', (d, i) => colors[assignments[i] % 10]);
+    }
+
+    function render() {
+      if (webglAnim) { cancelAnimationFrame(webglAnim); webglAnim = null; }
+      if (webglRenderer) { webglRenderer.forceContextLoss(); webglRenderer = null; }
+      chartEl.selectAll('*').remove();
+      if (!currentData.length) return;
+      const viz = document.getElementById('viz-select').value;
+      if (viz === 'scatter') {
+        const xField = document.getElementById('x-select').value;
+        const yField = document.getElementById('y-select').value;
+        if (xField && yField) drawScatterPlot(currentData, xField, yField);
+      } else if (viz === 'bar') {
+        const field = document.getElementById('cat-select').value;
+        if (field) drawBarChart(currentData, field);
+      } else if (viz === 'webgl') {
+        const xField = document.getElementById('x-select').value;
+        const yField = document.getElementById('y-select').value;
+        const zField = document.getElementById('z-select').value;
+        if (xField && yField && zField) drawWebGLScatter(currentData, xField, yField, zField);
+      } else if (viz === 'kmeans') {
+        const xField = document.getElementById('x-select').value;
+        const yField = document.getElementById('y-select').value;
+        const k = +document.getElementById('cluster-input').value;
+        if (xField && yField) drawKMeans(currentData, xField, yField, k);
+      } else if (viz === 'corr') {
+        drawCorrelationMatrix(currentData);
+      } else if (viz === 'pca') {
+        const selected = Array.from(document.getElementById('pca-select').selectedOptions).map(o => o.value);
+        if (selected.length >= 2) drawPCA(currentData, selected);
+      }
+    }
+
+    function handleData(data) {
+      currentData = data;
+      detectFields(data);
+      initControls();
+      render();
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', e => {
+      e.preventDefault();
+      const fileInput = document.getElementById('file-input');
+      if (!fileInput.files.length) return;
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      fetch('/upload', {method: 'POST', body: formData})
+        .then(res => res.json())
+        .then(handleData);
+    });
+
+    document.getElementById('load-sample').addEventListener('click', () => {
+      fetch('/api/sample').then(res => res.json()).then(handleData);
+    });
+  </script>
+</body>
+</html>
+
