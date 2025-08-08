@@ -4,7 +4,9 @@ import io
 import os
 
 
+
 app = Flask(__name__)
+
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'titanic.csv')
 
@@ -18,7 +20,6 @@ def parse_csv(stream):
 def sample():
     with open(DATA_PATH, newline='', encoding='utf-8') as f:
         return jsonify(parse_csv(f))
-
 
 @app.route('/')
 def index():
@@ -34,6 +35,6 @@ def upload():
     return jsonify(parse_csv(stream))
 
 
+
 if __name__ == '__main__':
     app.run(debug=True)
-

@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body class="container py-4">
+
   <h1 class="mb-4 text-center">Dataset Visualizer</h1>
   <form id="upload-form" class="mb-3 d-flex gap-2">
     <input type="file" id="file-input" accept=".csv" class="form-control" />
@@ -125,12 +126,14 @@
       render();
     }
 
+
     document.getElementById('upload-form').addEventListener('submit', e => {
       e.preventDefault();
       const fileInput = document.getElementById('file-input');
       if (!fileInput.files.length) return;
       const formData = new FormData();
       formData.append('file', fileInput.files[0]);
+
       fetch('/upload', {method: 'POST', body: formData})
         .then(res => res.json())
         .then(handleData);
